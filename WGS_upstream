@@ -1,0 +1,123 @@
+plink=/path/for/plink1.9/plink
+plink2=/path/for/plink2/plink2
+bcftools=/path/for/bcftools
+vcftools=/path/for/vcftools
+gatk=/path/for/gatk
+GATK_bundle=/path/for/GATK_bundle
+fa=/path/fot/GRCh38.p13.genome.fa
+
+###step0 sex_check  plink1.9
+plink --bfile   result --check-sex
+
+###step1 VQSR tranche
+##Variant filter
+$gatk VariantFiltration \
+    -V out.vcf.gz \
+    --filter-expression "ExcessHet > 54.69" \
+    --filter-name ExcessHet \
+    -O mom_609.excesshet.vcf.gz
+## SNP Recalibrator
+$gatk VariantRecalibrator \
+    -R $fa \
+    -V mom_609.excesshet.vcf.gz \
+    --trust-all-polymorphic \
+    -tranche 100.0 -tranche 99.95 -tranche 99.9 -tranche 99.8 -tranche 99.7 -tranche 99.6 -tranche 99.5 -tranche 99.4 -tranche 99.3 -tranche 99.0 -tranche 98.0 -tranche 97.0 -tranche 95.0 \
+    --max-gaussians 6 \
+    --resource:hapmap,known=false,training=true,truth=true,prior=15.0 $GATK_bundle/hapmap_3.3.hg38.vcf.gz \
+    --resource:omini,known=false,training=true,truth=false,prior=12.0 $GATK_bundle/1000G_omni2.5.hg38.vcf.gz \
+    --resource:1000G,known=false,training=true,truth=false,prior=10.0 $GATK_bundle/1000G_phase1.snps.high_confidence.hg38.vcf.gz \
+    --resource:dbsnp,known=true,training=false,truth=false,prior=7.0 $GATK_bundle/dbSNP_151_hg38_norm.vcf.gz \
+    --an QD -an MQ -an MQRankSum -an ReadPosRankSum -an FS -an SOR -an DP \
+    -mode SNP \
+    -O mom_609.HC.snps.recal \
+    --tranches-file mom_609.HC.snps.tranches \
+    --rscript-file mom_609.HC.snps.plots.R
+
+$gatk VariantRecalibrator \
+   -R $fa \
+   -V mom_609.excesshet.vcf.gz \
+   --trust-all-polymorphic \
+   -tranche 100.0 -tranche 99.95 -tranche 99.9 -tranche 99.5 -tranche 99.0 -tranche 98.0 -tranche 97.0 -tranche 96.0 -tranche 95.0 -tranche 94.0 -tranche 93.5 -tranche 93.0 -tranche 92.0 -tranche 91.0 -tranche 90.0 \
+   -mode INDEL \
+   --max-gaussians 4 \
+   --resource:mills,known=false,training=true,truth=true,prior=12 $GATK_bundle/hg38/Mills_and_1000G_gold_standard.indels.hg38.vcf.gz \
+   --resource:axiomPoly,known=false,training=true,truth=false,prior=10 $GATK_bundle/Axiom_Exome_Plus.genotypes.all_populations.poly.hg38.vcf.gz \
+   --resource:dbsnp,known=true,training=false,truth=false,prior=2 $GATK_bundle/dbSNP_151_hg38_norm.vcf.gz \
+   --an QD -an MQ -an MQRankSum -an ReadPosRankSum -an FS -an SOR -an DP \
+   -O mom_609.HC.indels.recal \
+   --tranches-file mom_609.HC.indels.tranches \
+   --rscript-file mom_609.HC.snps.plots.R
+
+### step2 VQSR apply
+$gatk --java-options "-Xmx5g -Xms5g" \
+    ApplyVQSR \
+    -V mom_609.excesshet.vcf.gz \
+    --recal-file mom_609.HC.indels.recal \
+    --tranches-file mom_609.HC.indels.tranches  \
+    --truth-sensitivity-filter-level 99.8 \
+    --create-output-variant-index true \
+    -mode INDEL \
+    -O mom_609.indel.recalibrated.vcf.gz
+
+$gatk  --java-options "-Xmx5g -Xms5g" \
+    ApplyVQSR \
+    -V mom_609.indel.recalibrated.vcf.gz \
+    --recal-file mom_609.HC.snps.recal \
+    --tranches-file mom_609.HC.snps.tranches\
+    --truth-sensitivity-filter-level 99.8 \
+    --create-output-variant-index true \
+    -mode SNP \
+    -O mom_609.snp.recalibrated.vcf.gz
+
+
+##  Subset to SNPs-only callset with SelectVariants
+/hwfssz1/ST_HEALTH/P17Z10200N0306/yeqingshi/software/anaconda3/envs/py37/bin/gatk SelectVariants \
+    -V mom_609.snp.recalibrated.vcf.gz \
+    -select-type SNP \
+    -O mom_609.snp.vcf.gz
+
+### vcf to plink
+$bcftools view  -f "PASS" -Oz -o mom_609_snps_filtered1.vcf.gz mom_609.snp.vcf.gz
+$bcftools index -t mom_609_snps_filtered1.vcf.gz
+$bcftools annotate --threads 4 -a $GATK_bundle/dbsnp_b151_common_GRCh38p7_GATK.vcf.gz -c ID -O z -o mom_609_snps_filtered1_rs.vcf.gz mom_609_snps_filtered1.vcf.gz
+$plink2 --vcf mom_609_snps_filtered1_rs.vcf.gz --make-bed --out mom_609_snps_out_filtered_rs
+
+$plink2 --bfile mom_609_snps_out_filtered_rs\
+        --pheno pheno1.txt \
+        --keep-if GDM==1 \
+        --make-bed \
+        --out mom_609_snps_out_filtered_rs_controls_only
+$plink2 --bfile mom_609_snps_out_filtered_rs_controls_only  --hwe 1e-6 --write-snplist \
+        --out hwe_controls
+$plink2 --bfile mom_609_snps_out_filtered_rs \
+       --extract hwe_controls.snplist \
+       --make-bed \
+       --out mom_609_snps_hwe
+$plink2 --bfile mom_609_snps_hwe --geno 0.05 --mind 0.05  --maf 0.05 --exclude range mhc_range.txt  --make-bed --out mom_609_snps_hweout
+### PCA
+$plink2 -bfile mom_609_snps_hweout  --pca 10 -out mom_609_snps_hweout
+### GWAS
+pheno_col=$1
+$plink2 \
+    --bfile mom_609_snps_hweout \
+    --pheno pheno.txt \
+    --pheno-col-nums $pheno_col \
+    --covar covar_hweout.txt \
+    --adjust  \
+    --covar-variance-standardize --glm no-firth no-x-sex hide-covar cols=+beta,+a1countcc,+totallelecc,+a1freq,+a1freqcc --psam mom_609_snps_hweout.fam --out mom_609_snps_hweout
+
+### PRS using Eastern Asian GDM as reference
+R --slave --no-restore --file=/path/for/prsice/PRSice.R  --args \
+    --prsice /path/for/prsice/PRSice_linux \
+    --base DIAMANTE-EAS.base \
+    --base-info  INFO:0.8 \
+    --dir /path/for/R/library/ \
+    --target mom_609_snps_hweout \
+    --binary-target F \
+    --pheno pheno1.txt \
+    --pheno-col GDM \
+    --cov  covar.txt \
+    --cov-col  BMI,AGE \
+    --stat BETA  \
+    --print-snp  \
+    --out mom_609_snps_hweout_DIAMANTE-EAS
