@@ -1,0 +1,118 @@
+rm(list = ls())
+library(locuscomparer)
+library(tidyverse)
+library(data.table)
+
+
+
+
+
+run_locuscompare <- function(
+    glm_file,
+    topsnp_id,
+    t2d_df,
+    window = 50000,
+    population = "EAS",
+    genome = "hg38",
+    title1,
+    title2
+) {
+  
+  ## read GWAS (glm)
+  glm_df <- read.delim(glm_file) %>%
+    dplyr::filter(A1_FREQ > 0.05)
+  
+  ## extract top SNP
+  topsnp <- glm_df %>%
+    dplyr::filter(ID == topsnp_id)
+  
+  if (nrow(topsnp) == 0) {
+    stop(paste("Top SNP", topsnp_id, "not found in", glm_file))
+  }
+  
+  chr0  <- as.character(topsnp$X.CHROM[1])
+  pos0  <- as.numeric(topsnp$POS[1])
+  lower <- pos0 - window
+  upper <- pos0 + window
+  
+  ## local glm region
+  myloc <- glm_df %>%
+    dplyr::filter(
+      X.CHROM == chr0,
+      POS >= lower,
+      POS <= upper
+    ) %>%
+    dplyr::select(
+      rsid = ID,
+      pval = P
+    )
+  
+  ## local second GWAS region (East Asian 1h glucose)
+  t2dloc <- t2d_df %>%
+    dplyr::filter(
+      CHR == chr0,
+      BP >= lower,
+      BP <= upper
+    ) %>%
+    dplyr::select(
+      rsid = SNP,
+      pval = PVAL
+    )
+  
+  locuscompare(
+    in_fn1 = myloc,
+    in_fn2 = t2dloc,
+    title1 = title1,
+    title2 = title2,
+    snp = topsnp_id,
+    population = population,
+    genome = genome
+  )
+}
+
+
+
+
+
+
+EastAsian_FastingGlucose_maternal <- fread("C:/Users/zqr20/Documents/EastAsian_FastingGlucose_maternal")
+
+run_locuscompare(
+  glm_file  = "~/mom_609_snps_hweout_3rd.L997.glm.linear",
+  topsnp_id = "rs1260334",
+  t2d_df    = EastAsian_FastingGlucose_maternal,
+  title1 = "TAG50:3-FA16:0",
+  title2 = "FastingGlucose",
+)
+
+ggsave("C:/Users/zqr20/OneDrive - BGI Hong Kong Tech Co., Limited/文档/349/second_version_manu/Figure5Cfasting.pdf", width = 6, height =6)
+
+
+
+EastAsian_1hGlucose_maternal <- fread("C:/Users/zqr20/Documents/European_1hGlucose_maternal")
+
+run_locuscompare(
+  glm_file  = "~/mom_609_snps_hweout_3rd.L997.glm.linear",
+  topsnp_id = "rs1260334",
+  t2d_df    = EastAsian_1hGlucose_maternal,
+  title1 = "TAG50:3-FA16:0",
+  title2 = "1hGlucose_maternal",
+)
+
+
+ggsave("C:/Users/zqr20/OneDrive - BGI Hong Kong Tech Co., Limited/文档/349/second_version_manu/Figure5C1hGlucose_maternal.pdf", width = 6, height =6)
+
+
+
+EastAsian_GDM <- fread("C:/Users/zqr20/Documents/European_GDM_maternal") %>%
+  mutate(PVAL = as.numeric(PVAL))
+
+run_locuscompare(
+  glm_file  = "~/mom_609_snps_hweout_3rd.L997.glm.linear",
+  topsnp_id = "rs1260334",
+  t2d_df    = EastAsian_GDM,
+  title1 = "TAG50:3-FA16:0",
+  title2 = "GDM",
+)
+
+ggsave("C:/Users/zqr20/OneDrive - BGI Hong Kong Tech Co., Limited/文档/349/second_version_manu/Figure5CGDM.pdf", width = 6, height =6)
